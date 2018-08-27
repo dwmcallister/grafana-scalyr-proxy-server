@@ -8,7 +8,9 @@
 
 namespace Adknown\ProxyScalyr\Controllers;
 
+use Adknown\ProxyScalyr\Grafana\Request\Target;
 use Adknown\ProxyScalyr\Grafana\Response\Query\TimeSeriesTarget;
+use Adknown\ProxyScalyr\Logging\LoggerImpl;
 use Adknown\ProxyScalyr\Scalyr\ComplexExpressions\Parser;
 use Adknown\ProxyScalyr\Scalyr\Request\Numeric;
 use Adknown\ProxyScalyr\Scalyr\Response\FacetResponse;
@@ -55,14 +57,69 @@ class Middleware
 			{
 				throw new Exception(sprintf("Empty target found for query #%d. All queries must have a target.", $targetIndex + 1));
 			}
-
-			$start = strtotime($request->range->from);
-			$end = strtotime($request->range->to);
+			$start = $request->range->GetFromAsTimestamp();
+			$end = $request->range->GetToAsTimestamp();
 			$buckets = $this->CalculateBuckets($start, $end, $queryData->secondsInterval);
 
 			switch($queryData->type)
 			{
 				case 'numeric query':
+					//split the query into complete intervals
+					if ($queryData->intervalType === Target::INTERVAL_TYPE_FIXED)
+					{
+						$startDT = new \DateTime($request->range->from, new \DateTimeZone('utc'));
+						$endDT = new \DateTime($request->range->to, new \DateTimeZone('utc'));
+						switch($queryData->chosenType)
+						{
+							case Target::FIXED_INTERVAL_MINUTE:
+								$startDT->setTime(
+									(int)$startDT->format('H'),
+									(int)$startDT->format('i'),
+									0
+								);
+								$endDT->setTime(
+									(int)$endDT->format('H'),
+									(int)$endDT->format('i'),
+									0
+								);
+								$queryData->secondsInterval = 60;
+								break;
+							case Target::FIXED_INTERVAL_HOUR:
+								$startDT->setTime(
+									(int)$startDT->format('H'),
+									0,
+									0
+								);
+								$endDT->setTime(
+									(int)$endDT->format('H'),
+									0,
+									0
+								);
+								$queryData->secondsInterval = 3600;
+								break;
+							case Target::FIXED_INTERVAL_DAY:
+								$startDT->setTime(
+									0,
+									0,
+									0
+								);
+								$endDT->setTime(
+									0,
+									0,
+									0
+								);
+								$queryData->secondsInterval = 86400;
+								break;
+							case Target::FIXED_INTERVAL_WEEK:
+							case Target::FIXED_INTERVAL_MONTH:
+							default:
+								throw new Exception("Selection '{$queryData->chosenType}' Not yet implemented");
+						}
+						$start = $startDT->getTimestamp();
+						$end = $endDT->getTimestamp();
+						$buckets = $this->CalculateBuckets($start, $end, $queryData->secondsInterval);
+					}
+
 					$response = $this->api->NumericQuery(
 						new Numeric(
 							$queryData->filter,
